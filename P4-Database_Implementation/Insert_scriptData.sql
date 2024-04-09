@@ -70,7 +70,7 @@ INSERT INTO APP_USER (user_id, user_name, password, contact, user_type, email, a
 GO
 
 -- Inserting data into the RENTER table
-INSERT INTO RENTER (renter_id, date_of_brith, credit_score) 
+INSERT INTO RENTER (renter_id, date_of_birth, credit_score) 
 VALUES 
 (1, '1986-05-12', 524),
 (14, '1990-07-24', 703),

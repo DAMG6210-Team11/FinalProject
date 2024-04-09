@@ -1,4 +1,6 @@
 -- PROCEDURES
+USE house_rental_database;
+GO
 
 -- Stored Procedure 1: Get Lease Details by Renter Name
 CREATE OR ALTER PROCEDURE GetLeaseDetailsByRenterName
@@ -109,6 +111,204 @@ BEGIN
       @UpdateMessage = @UpdateMessage OUTPUT;
 
    SELECT @UpdateMessage AS UpdateMessage;
+END;
+GO
+
+
+-- User Login Check
+CREATE or alter PROCEDURE dbo.CheckUserLogin1
+    @username NVARCHAR(50),
+    @plaintextPassword NVARCHAR(50),
+    @result BIT OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @EncryptedPassword VARBINARY(400);
+    
+    OPEN SYMMETRIC KEY appuserpass_sm DECRYPTION BY CERTIFICATE appuserpass;
+
+    SELECT @EncryptedPassword = password 
+    FROM dbo.APP_USER 
+    WHERE user_name = @username;
+
+    IF @EncryptedPassword IS NOT NULL AND
+       @EncryptedPassword = EncryptByKey(Key_GUID('appuserpass_sm'), CONVERT(varbinary, @plaintextPassword))
+    BEGIN
+        SET @result = 1; -- Login successful
+    END
+    ELSE
+    BEGIN
+        SET @result = 0; -- Login failed
+    END
+
+    CLOSE SYMMETRIC KEY appuserpass_sm;
+END;
+GO
+
+-- Validate Login
+CREATE OR ALTER PROCEDURE dbo.ValidateLogin
+    @username NVARCHAR(50),
+    @plaintextPassword NVARCHAR(50),
+    @IsLoginValid BIT OUTPUT,
+    @UserType NVARCHAR(50) OUTPUT,
+    @UserId INT OUTPUT -- Add user_id as an output parameter
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @EncryptedPassword VARBINARY(MAX);
+
+    -- Open the symmetric key
+    OPEN SYMMETRIC KEY appuserpass_sm DECRYPTION BY CERTIFICATE appuserpass;
+
+    -- Attempt to retrieve the user's encrypted password, user type, and user ID
+    SELECT 
+        @EncryptedPassword = password,
+        @UserType = user_type,
+        @UserId = user_id -- Retrieve the user_id
+    FROM APP_USER
+    WHERE user_name = @username;
+
+    -- Check if an entry exists and compare the decrypted password
+    IF (@EncryptedPassword IS NOT NULL)
+    BEGIN
+        SET @IsLoginValid = CASE
+            WHEN CONVERT(VARCHAR, DecryptByKey(@EncryptedPassword)) = @plaintextPassword THEN 1
+            ELSE 0
+        END;
+    END
+    ELSE
+    BEGIN
+        -- If no user is found or passwords do not match
+        SET @IsLoginValid = 0;
+        SET @UserType = NULL;
+        SET @UserId = NULL; -- Default the UserId to NULL if not found
+    END
+
+    -- Close the symmetric key
+    CLOSE SYMMETRIC KEY appuserpass_sm;
+END;
+GO
+
+--- User Registration
+CREATE OR ALTER PROCEDURE dbo.RegisterNewUser
+    @UserId INT,
+    @Username NVARCHAR(50),
+    @PlaintextPassword NVARCHAR(50),
+    @Contact NVARCHAR(25),
+    @UserType NVARCHAR(50),
+    @Email NVARCHAR(50),
+    @Address NVARCHAR(100),
+    @StatusCode INT OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Check if UserId or Username already exists
+    IF EXISTS(SELECT * FROM APP_USER WHERE user_id = @UserId OR user_name = @Username)
+    BEGIN
+        -- User ID or Username is taken
+        SET @StatusCode = -1; -- Indicating error
+        RETURN;
+    END
+
+    BEGIN TRY
+        -- Open the symmetric key to encrypt the password
+        OPEN SYMMETRIC KEY appuserpass_sm DECRYPTION BY CERTIFICATE appuserpass;
+
+        -- Encrypt the plaintext password
+        DECLARE @EncryptedPassword VARBINARY(400);
+        SET @EncryptedPassword = EncryptByKey(Key_GUID('appuserpass_sm'), CONVERT(varbinary, @PlaintextPassword));
+
+        -- Insert the new user record with encrypted password
+        INSERT INTO APP_USER (user_id, user_name, password, contact, user_type, email, address)
+        VALUES (@UserId, @Username, @EncryptedPassword, @Contact, @UserType, @Email, @Address);
+
+        IF @UserType = 'OWNER'
+            INSERT INTO OWNER (owner_id, tax_id, owner_type) VALUES (@UserId, '', 'LANDLORD');
+
+        IF @UserType = 'RENTER'
+            INSERT INTO RENTER (renter_id, date_of_birth, credit_score) VALUES (@UserId, '', '');
+        -- Indicate success
+        SET @StatusCode = 0; -- Success
+
+        -- Close the symmetric key
+        CLOSE SYMMETRIC KEY appuserpass_sm;
+    END TRY
+    BEGIN CATCH
+        -- Handle unexpected errors
+        SET @StatusCode = -2; -- Indicating an unexpected error
+    END CATCH
+END;
+
+GO
+
+
+-- User Password Updation
+CREATE OR ALTER PROCEDURE dbo.UpdateUserPassword
+    @UserId INT,
+    @OldPlaintextPassword NVARCHAR(50),
+    @NewPlaintextPassword NVARCHAR(50),
+    @StatusCode INT OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Attempt to open the symmetric key
+    BEGIN TRY
+        OPEN SYMMETRIC KEY appuserpass_sm DECRYPTION BY CERTIFICATE appuserpass;
+    END TRY
+    BEGIN CATCH
+        SET @StatusCode = -3; -- Issue with opening the symmetric key
+        RETURN;
+    END CATCH
+
+    -- Verify the old password by decrypting the stored password
+    IF EXISTS (
+        SELECT 1 
+        FROM APP_USER
+        WHERE user_id = @UserId 
+        AND CONVERT(NVARCHAR(50), DecryptByKey(password)) = @OldPlaintextPassword
+    )
+    BEGIN
+        -- Encrypt the new plaintext password
+        DECLARE @EncryptedNewPassword VARBINARY(400);
+        SET @EncryptedNewPassword = EncryptByKey(Key_GUID('appuserpass_sm'), @NewPlaintextPassword);
+
+        -- Update the user's password in the database
+        UPDATE APP_USER
+        SET password = @EncryptedNewPassword
+        WHERE user_id = @UserId;
+
+        SET @StatusCode = 0; -- Success
+    END
+    ELSE
+    BEGIN
+        SET @StatusCode = -1; -- Old password is incorrect
+    END
+
+    -- Close the symmetric key
+    CLOSE SYMMETRIC KEY appuserpass_sm;
+END;
+GO
+
+
+-- Add a new Property
+CREATE OR ALTER PROCEDURE dbo.AddProperty
+    @OwnerID INT,
+    @PropertyAddress VARCHAR(100),
+    @City VARCHAR(50),
+    @State VARCHAR(50),
+    @Zip VARCHAR(10),
+    @PropertyCost DECIMAL(10,2),
+    @PropertyType VARCHAR(50),
+    @SquareFeet INT,
+    @Description TEXT
+AS
+BEGIN
+    INSERT INTO PROPERTY (owner_id, property_address, city, state, zip, property_cost, property_type, square_feet, description)
+    VALUES (@OwnerID, @PropertyAddress, @City, @State, @Zip, @PropertyCost, @PropertyType, @SquareFeet, @Description);
 END;
 GO
 
@@ -246,7 +446,7 @@ WHERE renter_id = 1;
 GO
 
 -- Check the audit log
-SELECT renter_id, date_of_brith, credit_score FROM RENTER;
+SELECT renter_id, date_of_birth, credit_score FROM RENTER;
 SELECT audit_id, renter_id, old_credit_score, new_credit_score, update_date FROM renter_credit_audit
 ORDER BY update_date DESC;
 GO
@@ -259,7 +459,7 @@ AS
 BEGIN
 DECLARE @dob DATE;
 
-    SELECT @dob = date_of_brith from RENTER where renter_id = @renter_id;
+    SELECT @dob = date_of_birth from RENTER where renter_id = @renter_id;
     RETURN DATEDIFF(YEAR, @dob, GETDATE()) - 
            CASE 
                 WHEN MONTH(@dob) > MONTH(GETDATE()) OR 

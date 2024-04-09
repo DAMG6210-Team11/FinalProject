@@ -22,7 +22,7 @@ GO
 CREATE TABLE RENTER
   (
      renter_id   INTEGER NOT NULL,
-     date_of_brith DATE,
+     date_of_birth DATE,
      credit_score INTEGER,
      CONSTRAINT renterid_pk PRIMARY KEY (renter_id),
      CONSTRAINT useridrenter_fk FOREIGN KEY (renter_id) REFERENCES app_user(
@@ -126,6 +126,8 @@ CREATE TABLE LEASE
   );
 GO
 
+
+
 --Payment Table Creation
 CREATE TABLE PAYMENT
   (
@@ -192,5 +194,15 @@ CREATE TABLE brokerage
 GO
 
 
+-- alter table payment drop CONSTRAINT payment_lease_fk;
+-- alter table payment add  CONSTRAINT payment_lease_fk FOREIGN KEY (lease_id) REFERENCES lease(
+--      lease_id) on delete CASCADE;
 
+
+-- alter table lease drop CONSTRAINT payment_lease_fk;
+-- alter table payment add  CONSTRAINT payment_lease_fk FOREIGN KEY (lease_id) REFERENCES lease(
+--      lease_id) on delete CASCADE;  
+
+ALTER TABLE PROPERTY
+ADD status BIT NOT NULL DEFAULT 1;
 -- DROP DATABASE house_rental_database;
